@@ -166,11 +166,13 @@ async function importFile(file, fromSetup) {
   } catch (_) { toast('הקובץ לא תקין'); }
 }
 $('t-face').onclick = async () => {
-  const pw = prompt('הקלד סיסמה ראשית להפעלת Face ID');
-  if (!pw) return;
+  const pw = $('t-pw').value;
+  if (!pw) { $('t-msg').textContent = 'הקלד קודם את הסיסמה הראשית בשדה שמעל הכפתור.'; return; }
+  let step = 'start';
   try {
-    await VC.unlockPw(vault, pw);
+    // קודם מבקשים Face ID (חייב להיות מיד אחרי הלחיצה), ורק אחר כך בודקים סיסמה
     const salt = VC.rnd(32);
+    step = 'create';
     const cred = await navigator.credentials.create({ publicKey: {
       challenge: VC.rnd(32), rp: { name: 'כספת', id: location.hostname },
       user: { id: VC.rnd(16), name: 'vault', displayName: 'כספת' },
@@ -181,15 +183,20 @@ $('t-face').onclick = async () => {
     let res = cred.getClientExtensionResults().prf;
     let secret = res && res.results && res.results.first;
     if (!secret) {
+      step = 'get';
       const a = await navigator.credentials.get({ publicKey: { challenge: VC.rnd(32), rpId: location.hostname, userVerification: 'required',
         allowCredentials: [{ type: 'public-key', id: cred.rawId }], extensions: { prf: { eval: { first: salt } } } } });
       res = a.getClientExtensionResults().prf; secret = res && res.results && res.results.first;
     }
     if (!secret) { $('t-msg').textContent = 'המכשיר לא תומך ב-Face ID לכספת. נשארים עם סיסמה.'; return; }
+    step = 'wrap';
     await VC.addPrf(vault, pw, secret);
     await kv.set('credId', new Uint8Array(cred.rawId)); await kv.set('prfSalt', salt); await persistVault();
+    $('t-pw').value = '';
     $('t-msg').textContent = 'Face ID הופעל.';
-  } catch (_) { $('t-msg').textContent = 'ההפעלה נכשלה (סיסמה שגויה או ביטול).'; }
+  } catch (e) {
+    $('t-msg').textContent = step === 'wrap' ? 'הסיסמה הראשית שגויה.' : 'נכשל בשלב ' + step + ': ' + (e && e.name) + ' - ' + (e && e.message ? e.message.slice(0, 80) : '');
+  }
 };
 
 // ---- הפעלה ----
