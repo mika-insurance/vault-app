@@ -5,6 +5,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font:17px/1.4 -apple-system,s
 h1,h2{margin:12px 0}
 input,button,.btn{width:100%;font:inherit;border-radius:12px;border:1px solid #334155;background:var(--card);color:var(--fg);padding:14px;margin:6px 0;display:block;text-align:center}
 input{text-align:right}
+input[dir=ltr]{text-align:left}
 button{cursor:pointer}
 .primary{background:var(--acc);border-color:var(--acc)}
 .danger{background:#7f1d1d;border-color:#7f1d1d}
