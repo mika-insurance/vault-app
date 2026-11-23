@@ -40,6 +40,12 @@
     <input id="m-q" type="search" placeholder="חיפוש אתר">
     <button id="m-add" class="primary">＋</button>
   </header>
+  <div id="m-crumb"></div>
+  <div class="row3">
+    <button id="m-newf">📁 תיקייה חדשה</button>
+    <button id="m-renf" hidden>שינוי שם</button>
+    <button id="m-delf" class="danger" hidden>מחיקה</button>
+  </div>
   <p id="m-warn" class="warn" hidden></p>
   <ul id="m-list"></ul>
   <footer>
@@ -50,6 +56,7 @@
 
 <section id="v-edit" hidden>
   <h2 id="e-title">רשומה</h2>
+  <select id="e-folder"></select>
   <input id="e-site" placeholder="אתר" dir="ltr" lang="en" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false">
   <input id="e-user" placeholder="שם משתמש / אימייל" dir="ltr" lang="en" inputmode="email" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
   <div class="row">

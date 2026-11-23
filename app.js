@@ -1,7 +1,27 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const views = ['setup', 'lock', 'main', 'edit', 'set'];
-let vault = null, dk = null, items = [], editing = null, idleT = null, clipT = null;
+let vault = null, dk = null, items = [], folders = [], cur = null, needSave = false, editing = null, idleT = null, clipT = null;
+const DEF_FOLDERS = ['חשבונות דואר אלקטרוני', 'כרטיסי אשראי', 'בנקים', 'אתרים'];
+// טעינת נתונים. תומך גם בפורמט הישן (מערך רשומות בלבד)
+function load(d) {
+  if (Array.isArray(d)) d = { folders: null, items: d };
+  d = d || { folders: null, items: [] };
+  items = (d.items || []).map(i => ({ ...i, folder: i.folder || null }));
+  if (d.folders) folders = d.folders;
+  else { folders = DEF_FOLDERS.map(n => ({ id: crypto.randomUUID(), name: n, parent: null })); needSave = true; }
+  cur = null;
+}
+function pathOf(id) {
+  const p = [];
+  while (id) { const f = folders.find(x => x.id === id); if (!f) break; p.unshift(f.name); id = f.parent; }
+  return p.join(' › ');
+}
+function inside(id) {
+  const ids = [id];
+  for (let k = 0; k < ids.length; k++) folders.filter(f => f.parent === ids[k]).forEach(f => ids.push(f.id));
+  return ids;
+}
 const IDLE_MS = 60000, CLIP_MS = 30000, BACKUP_DAYS = 30;
 
 // ---- אחסון (IndexedDB) ----
@@ -20,7 +40,7 @@ function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; s
 
 // ---- נעילה ----
 function lock() {
-  dk = null; items = []; editing = null;
+  dk = null; items = []; folders = []; cur = null; editing = null;
   $('m-q').value = ''; $('e-pw').value = ''; $('l-pw').value = '';
   $('m-list').textContent = '';
   show(vault ? 'lock' : 'setup');
@@ -31,7 +51,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && dk)
 window.addEventListener('pagehide', () => { if (dk) lock(); });
 
 async function persistVault() { await kv.set('vault', vault); }
-async function saveItems() { await VC.writeItems(vault, dk, items); await persistVault(); }
+async function saveItems() { await VC.writeItems(vault, dk, { folders, items }); await persistVault(); }
 
 // ---- הקמה ----
 $('s-go').onclick = async () => {
@@ -40,8 +60,8 @@ $('s-go').onclick = async () => {
   if (a !== b) return $('s-err').textContent = 'הסיסמאות לא זהות';
   $('s-err').textContent = 'יוצר...';
   const r = await VC.create(a);
-  vault = r.vault; dk = r.dk; items = [];
-  await persistVault();
+  vault = r.vault; dk = r.dk; load(null);
+  await saveItems();
   $('s-pw1').value = $('s-pw2').value = ''; $('s-err').textContent = '';
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
   enter();
@@ -54,7 +74,7 @@ async function tryUnlockPw() {
   $('l-err').textContent = 'פותח...';
   try {
     dk = await VC.unlockPw(vault, pw);
-    items = await VC.readItems(vault, dk);
+    load(await VC.readItems(vault, dk));
     $('l-pw').value = ''; $('l-err').textContent = '';
     enter();
   } catch (_) {
@@ -76,26 +96,47 @@ async function tryFace() {
     const r = cred.getClientExtensionResults().prf;
     if (!r || !r.results || !r.results.first) throw new Error('no prf');
     dk = await VC.unlockPrf(vault, r.results.first);
-    items = await VC.readItems(vault, dk);
+    load(await VC.readItems(vault, dk));
     enter();
   } catch (_) { dk = null; $('l-err').textContent = 'Face ID לא הצליח. אפשר עם סיסמה.'; }
 }
 $('l-face').onclick = tryFace;
 
 // ---- מסך ראשי ----
-function enter() { show('main'); renderList(); backupWarn(); touch(); }
+function enter() { cur = null; show('main'); renderList(); backupWarn(); touch(); if (needSave) { needSave = false; saveItems(); } }
 $('m-q').oninput = renderList;
 function renderList() {
   const q = $('m-q').value.trim().toLowerCase();
   const ul = $('m-list'); ul.textContent = '';
-  const shown = items.filter(i => !q || i.site.toLowerCase().includes(q) || i.user.toLowerCase().includes(q))
+  const crumb = $('m-crumb'); crumb.textContent = '';
+  const inF = !q && !!cur;
+  $('m-renf').hidden = $('m-delf').hidden = !inF;
+  $('m-newf').hidden = !!q;
+  if (inF) {
+    const b = document.createElement('button'); b.className = 'crumbbtn';
+    b.textContent = '→ ' + pathOf(cur) + ' (חזרה)';
+    b.onclick = () => { const f = folders.find(x => x.id === cur); cur = f ? f.parent : null; renderList(); };
+    crumb.append(b);
+  }
+  if (!q) {
+    folders.filter(f => f.parent === cur).sort((a, b) => a.name.localeCompare(b.name)).forEach(f => {
+      const li = document.createElement('li'); li.className = 'folder';
+      const n = items.filter(i => inside(f.id).includes(i.folder)).length;
+      const info = document.createElement('div'); info.className = 'info';
+      const s = document.createElement('b'); s.textContent = '📁 ' + f.name;
+      const u = document.createElement('span'); u.textContent = n + ' רשומות';
+      info.append(s, u); li.append(info); li.onclick = () => { cur = f.id; renderList(); };
+      ul.append(li);
+    });
+  }
+  const shown = items.filter(i => q ? (i.site.toLowerCase().includes(q) || i.user.toLowerCase().includes(q)) : i.folder === cur)
     .sort((a, b) => a.site.localeCompare(b.site));
-  if (!shown.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = items.length ? 'לא נמצא' : 'עדיין אין סיסמאות. לחץ על ＋'; ul.append(li); return; }
+  if (!shown.length && !ul.children.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = items.length ? (q ? 'לא נמצא' : 'התיקייה ריקה. לחץ על ＋') : 'עדיין אין סיסמאות. לחץ על ＋'; ul.append(li); return; }
   for (const it of shown) {
     const li = document.createElement('li');
     const info = document.createElement('div'); info.className = 'info';
     const s = document.createElement('b'); s.textContent = it.site;
-    const u = document.createElement('span'); u.textContent = it.user;
+    const u = document.createElement('span'); u.textContent = it.user + (q && it.folder ? '  ·  ' + pathOf(it.folder) : '');
     info.append(s, u); info.onclick = () => openEdit(it);
     const cp = document.createElement('button'); cp.textContent = 'העתק'; cp.onclick = () => copyPw(it);
     li.append(info, cp); ul.append(li);
@@ -126,8 +167,33 @@ function openEdit(it) {
   editing = it || null;
   $('e-title').textContent = it ? 'עריכה' : 'רשומה חדשה';
   $('e-site').value = it ? it.site : ''; $('e-user').value = it ? it.user : ''; $('e-pw').value = it ? it.pw : '';
-  $('e-pw').type = 'password'; $('e-del').hidden = !it; show('edit');
+  $('e-pw').type = 'password'; $('e-del').hidden = !it;
+  const sel = $('e-folder'); sel.textContent = '';
+  const none = document.createElement('option'); none.value = ''; none.textContent = 'ללא תיקייה'; sel.append(none);
+  folders.map(f => ({ id: f.id, p: pathOf(f.id) })).sort((a, b) => a.p.localeCompare(b.p)).forEach(f => {
+    const o = document.createElement('option'); o.value = f.id; o.textContent = f.p; sel.append(o);
+  });
+  sel.value = it ? (it.folder || '') : (cur || '');
+  show('edit');
 }
+// ---- תיקיות ----
+$('m-newf').onclick = async () => {
+  const name = (prompt('שם התיקייה החדשה') || '').trim(); if (!name) return;
+  folders.push({ id: crypto.randomUUID(), name, parent: cur });
+  await saveItems(); renderList();
+};
+$('m-renf').onclick = async () => {
+  const f = folders.find(x => x.id === cur); if (!f) return;
+  const name = (prompt('שם חדש לתיקייה', f.name) || '').trim(); if (!name) return;
+  f.name = name; await saveItems(); renderList();
+};
+$('m-delf').onclick = async () => {
+  const f = folders.find(x => x.id === cur); if (!f) return;
+  const ids = inside(f.id);
+  if (ids.length > 1 || items.some(i => ids.includes(i.folder))) return toast('אי אפשר למחוק תיקייה שאינה ריקה. העבר או מחק קודם את התוכן');
+  if (!confirm('למחוק את התיקייה "' + f.name + '"?')) return;
+  folders = folders.filter(x => x.id !== f.id); cur = f.parent; await saveItems(); renderList();
+};
 $('m-add').onclick = () => openEdit(null);
 $('e-show').onclick = () => { const p = $('e-pw'); p.type = p.type === 'password' ? 'text' : 'password'; };
 $('e-gen').onclick = () => { $('e-pw').value = VC.gen(20); $('e-pw').type = 'text'; };
@@ -135,9 +201,11 @@ $('e-cancel').onclick = () => { $('e-pw').value = ''; show('main'); };
 $('e-save').onclick = async () => {
   const site = $('e-site').value.trim(), user = $('e-user').value.trim(), pw = $('e-pw').value;
   if (!site || !pw) return toast('חסר אתר או סיסמה');
-  if (editing) Object.assign(editing, { site, user, pw });
-  else items.push({ id: crypto.randomUUID(), site, user, pw });
-  await saveItems(); $('e-pw').value = ''; show('main'); renderList(); touch();
+  const folder = $('e-folder').value || null;
+  if (editing) Object.assign(editing, { site, user, pw, folder });
+  else items.push({ id: crypto.randomUUID(), site, user, pw, folder });
+  cur = folder;
+  await saveItems(); $('e-pw').value = ''; show('main'); $('m-q').value = ''; renderList(); touch();
 };
 $('e-del').onclick = async () => {
   if (!editing || !confirm('למחוק את הרשומה?')) return;
