@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="כספת">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#14213d">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+<title>כספת</title>
+</head>
+<body>
+<main id="app">
+
+<section id="v-setup" hidden>
+  <h1>🔐 כספת</h1>
+  <p>בחר סיסמה ראשית. <b>אין שחזור</b> אם היא נשכחת. כדאי לרשום אותה על דף ולשמור במקום בטוח.</p>
+  <input id="s-pw1" type="password" placeholder="סיסמה ראשית (לפחות 10 תווים)" autocomplete="new-password">
+  <input id="s-pw2" type="password" placeholder="הקלד שוב" autocomplete="new-password">
+  <button id="s-go" class="primary">יצירת כספת</button>
+  <p id="s-err" class="err"></p>
+  <details><summary>יש לי קובץ גיבוי</summary>
+    <input id="s-file" type="file" accept=".json,application/json">
+  </details>
+</section>
+
+<section id="v-lock" hidden>
+  <h1>🔒 כספת נעולה</h1>
+  <button id="l-face" class="primary" hidden>פתיחה עם Face ID</button>
+  <input id="l-pw" type="password" placeholder="סיסמה ראשית" autocomplete="current-password">
+  <button id="l-go">פתיחה</button>
+  <p id="l-err" class="err"></p>
+</section>
+
+<section id="v-main" hidden>
+  <header>
+    <input id="m-q" type="search" placeholder="חיפוש אתר">
+    <button id="m-add" class="primary">＋</button>
+  </header>
+  <p id="m-warn" class="warn" hidden></p>
+  <ul id="m-list"></ul>
+  <footer>
+    <button id="m-set">הגדרות</button>
+    <button id="m-lock">נעילה</button>
+  </footer>
+</section>
+
+<section id="v-edit" hidden>
+  <h2 id="e-title">רשומה</h2>
+  <input id="e-site" placeholder="אתר">
+  <input id="e-user" placeholder="שם משתמש" autocomplete="off">
+  <div class="row">
+    <input id="e-pw" type="password" placeholder="סיסמה" autocomplete="off">
+    <button id="e-show">👁</button>
+  </div>
+  <button id="e-gen">יצירת סיסמה חזקה</button>
+  <button id="e-save" class="primary">שמירה</button>
+  <button id="e-del" class="danger" hidden>מחיקה</button>
+  <button id="e-cancel">ביטול</button>
+</section>
+
+<section id="v-set" hidden>
+  <h2>הגדרות</h2>
+  <button id="t-face">הפעלת Face ID</button>
+  <button id="t-exp">ייצוא גיבוי מוצפן</button>
+  <label class="btn">ייבוא גיבוי <input id="t-imp" type="file" accept=".json,application/json" hidden></label>
+  <p id="t-msg"></p>
+  <button id="t-back">חזרה</button>
+</section>
+
+</main>
+<div id="toast" hidden></div>
+<script src="crypto.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
