@@ -36,11 +36,22 @@ const kv = {
 };
 
 function show(v) { views.forEach(n => $('v-' + n).hidden = n !== v); }
+// חלון דו-שיח פנימי (prompt/confirm של הדפדפן נחסמים באפליקציה מותקנת באייפון)
+function dialog(msg, { input = false, value = '' } = {}) {
+  return new Promise(res => {
+    $('d-msg').textContent = msg;
+    const i = $('d-in'); i.hidden = !input; i.value = value; $('dlg').hidden = false;
+    if (input) setTimeout(() => i.focus(), 50);
+    const done = v => { $('dlg').hidden = true; $('d-ok').onclick = $('d-no').onclick = null; res(v); };
+    $('d-ok').onclick = () => done(input ? i.value.trim() : true);
+    $('d-no').onclick = () => done(input ? '' : false);
+  });
+}
 function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; setTimeout(() => e.hidden = true, 2500); }
 
 // ---- נעילה ----
 function lock() {
-  dk = null; items = []; folders = []; cur = null; editing = null;
+  dk = null; items = []; folders = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = '';
   $('m-q').value = ''; $('e-pw').value = ''; $('l-pw').value = '';
   $('m-list').textContent = '';
   show(vault ? 'lock' : 'setup');
@@ -178,20 +189,20 @@ function openEdit(it) {
 }
 // ---- תיקיות ----
 $('m-newf').onclick = async () => {
-  const name = (prompt('שם התיקייה החדשה') || '').trim(); if (!name) return;
+  const name = await dialog('שם התיקייה החדשה', { input: true }); if (!name) return;
   folders.push({ id: crypto.randomUUID(), name, parent: cur });
   await saveItems(); renderList();
 };
 $('m-renf').onclick = async () => {
   const f = folders.find(x => x.id === cur); if (!f) return;
-  const name = (prompt('שם חדש לתיקייה', f.name) || '').trim(); if (!name) return;
+  const name = await dialog('שם חדש לתיקייה', { input: true, value: f.name }); if (!name) return;
   f.name = name; await saveItems(); renderList();
 };
 $('m-delf').onclick = async () => {
   const f = folders.find(x => x.id === cur); if (!f) return;
   const ids = inside(f.id);
   if (ids.length > 1 || items.some(i => ids.includes(i.folder))) return toast('אי אפשר למחוק תיקייה שאינה ריקה. העבר או מחק קודם את התוכן');
-  if (!confirm('למחוק את התיקייה "' + f.name + '"?')) return;
+  if (!(await dialog('למחוק את התיקייה "' + f.name + '"?'))) return;
   folders = folders.filter(x => x.id !== f.id); cur = f.parent; await saveItems(); renderList();
 };
 $('m-add').onclick = () => openEdit(null);
@@ -208,7 +219,7 @@ $('e-save').onclick = async () => {
   await saveItems(); $('e-pw').value = ''; show('main'); $('m-q').value = ''; renderList(); touch();
 };
 $('e-del').onclick = async () => {
-  if (!editing || !confirm('למחוק את הרשומה?')) return;
+  if (!editing || !(await dialog('למחוק את הרשומה?'))) return;
   items = items.filter(i => i !== editing); await saveItems(); $('e-pw').value = ''; show('main'); renderList();
 };
 
@@ -226,7 +237,7 @@ async function importFile(file, fromSetup) {
   try {
     const v = JSON.parse(await file.text());
     if (v.v !== 1 || !v.salt || !v.wrapPw || !v.data) throw new Error('bad');
-    if (!fromSetup && !confirm('הייבוא יחליף את כל הכספת הקיימת. להמשיך?')) return;
+    if (!fromSetup && !(await dialog('הייבוא יחליף את כל הכספת הקיימת. להמשיך?'))) return;
     vault = { v: v.v, salt: v.salt, iter: v.iter, wrapPw: v.wrapPw, data: v.data };
     await persistVault();
     await kv.set('credId', null);
