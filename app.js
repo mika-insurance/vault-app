@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const views = ['setup', 'lock', 'main', 'edit', 'set'];
-let vault = null, dk = null, items = [], folders = [], cur = null, needSave = false, editing = null, idleT = null, clipT = null;
+const views = ['setup', 'lock', 'main', 'view', 'edit', 'set'];
+let viewing = null, vault = null, dk = null, items = [], folders = [], cur = null, needSave = false, editing = null, idleT = null, clipT = null;
 const DEF_FOLDERS = ['חשבונות דואר אלקטרוני', 'כרטיסי אשראי', 'בנקים', 'אתרים'];
 // טעינת נתונים. תומך גם בפורמט הישן (מערך רשומות בלבד)
 function load(d) {
@@ -51,7 +51,7 @@ function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; s
 
 // ---- נעילה ----
 function lock() {
-  dk = null; items = []; folders = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = '';
+  dk = null; items = []; folders = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null;
   $('m-q').value = ''; $('e-pw').value = ''; $('l-pw').value = '';
   $('m-list').textContent = '';
   show(vault ? 'lock' : 'setup');
@@ -148,7 +148,7 @@ function renderList() {
     const info = document.createElement('div'); info.className = 'info';
     const s = document.createElement('b'); s.textContent = it.site;
     const u = document.createElement('span'); u.textContent = it.user + (q && it.folder ? '  ·  ' + pathOf(it.folder) : '');
-    info.append(s, u); info.onclick = () => openEdit(it);
+    info.append(s, u); info.onclick = () => openView(it);
     const cp = document.createElement('button'); cp.textContent = 'העתק'; cp.onclick = () => copyPw(it);
     li.append(info, cp); ul.append(li);
   }
@@ -172,6 +172,24 @@ async function backupWarn() {
   w.hidden = days < BACKUP_DAYS;
   w.textContent = last ? `הגיבוי האחרון לפני ${Math.floor(days)} ימים. הגיע הזמן לייצא.` : 'עוד לא בוצע גיבוי. הגדרות ← ייצוא גיבוי.';
 }
+
+// ---- צפייה (בלי אפשרות לשנות או למחוק) ----
+function openView(it) {
+  viewing = it;
+  $('v-site').textContent = it.site; $('v-user').textContent = it.user || '—';
+  $('v-folder').textContent = it.folder ? pathOf(it.folder) : 'ללא תיקייה';
+  $('v-pw').textContent = '••••••••'; $('v-show').textContent = '👁 הצג סיסמה';
+  show('view');
+}
+$('v-show').onclick = () => {
+  const hidden = $('v-pw').textContent === '••••••••';
+  $('v-pw').textContent = hidden ? viewing.pw : '••••••••';
+  $('v-show').textContent = hidden ? '🙈 הסתר סיסמה' : '👁 הצג סיסמה';
+};
+$('v-copy').onclick = () => copyPw(viewing);
+$('v-copyu').onclick = async () => { try { await navigator.clipboard.writeText(viewing.user); toast('שם המשתמש הועתק'); } catch (_) { toast('ההעתקה נחסמה'); } };
+$('v-editbtn').onclick = () => { $('v-pw').textContent = ''; openEdit(viewing); };
+$('v-back').onclick = () => { $('v-pw').textContent = ''; viewing = null; show('main'); renderList(); };
 
 // ---- עריכה ----
 function openEdit(it) {
@@ -208,7 +226,7 @@ $('m-delf').onclick = async () => {
 $('m-add').onclick = () => openEdit(null);
 $('e-show').onclick = () => { const p = $('e-pw'); p.type = p.type === 'password' ? 'text' : 'password'; };
 $('e-gen').onclick = () => { $('e-pw').value = VC.gen(20); $('e-pw').type = 'text'; };
-$('e-cancel').onclick = () => { $('e-pw').value = ''; show('main'); };
+$('e-cancel').onclick = () => { $('e-pw').value = ''; if (editing) openView(editing); else show('main'); };
 $('e-save').onclick = async () => {
   const site = $('e-site').value.trim(), user = $('e-user').value.trim(), pw = $('e-pw').value;
   if (!site || !pw) return toast('חסר אתר או סיסמה');
