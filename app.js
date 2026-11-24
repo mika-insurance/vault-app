@@ -41,9 +41,9 @@ function clearImgs() { imgUrls.forEach(u => URL.revokeObjectURL(u)); imgUrls = [
 
 function show(v) { views.forEach(n => $('v-' + n).hidden = n !== v); }
 // חלון דו-שיח פנימי (prompt/confirm של הדפדפן נחסמים באפליקציה מותקנת באייפון)
-function dialog(msg, { input = false, value = '' } = {}) {
+function dialog(msg, { input = false, value = '', ok = 'אישור', no = 'ביטול' } = {}) {
   return new Promise(res => {
-    $('d-msg').textContent = msg;
+    $('d-msg').textContent = msg; $('d-ok').textContent = ok; $('d-no').textContent = no;
     const i = $('d-in'); i.hidden = !input; i.value = value; $('dlg').hidden = false;
     if (input) setTimeout(() => i.focus(), 50);
     const done = v => { $('dlg').hidden = true; $('d-ok').onclick = $('d-no').onclick = null; res(v); };
@@ -55,7 +55,7 @@ function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; c
 
 // ---- נעילה ----
 function lock() {
-  dk = null; items = []; folders = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null; clearImgs();
+  dk = null; items = []; folders = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null; clearImgs(); pending = []; addTo = null;
   $('m-q').value = ''; $('e-pw').value = ''; $('l-pw').value = '';
   $('m-list').textContent = '';
   show(vault ? 'lock' : 'setup');
@@ -154,7 +154,7 @@ function renderList() {
     const li = document.createElement('li');
     const info = document.createElement('div'); info.className = 'info';
     const s = document.createElement('b'); s.textContent = (it.kind === 'photo' ? '📷 ' : '') + it.site;
-    const u = document.createElement('span'); u.textContent = (it.kind === 'photo' ? 'תמונה מוצפנת' : it.user) + (q && it.folder ? '  ·  ' + pathOf(it.folder) : '');
+    const u = document.createElement('span'); u.textContent = (it.kind === 'photo' ? (it.imgs || []).length + ' תמונות מוצפנות' : it.user) + (q && it.folder ? '  ·  ' + pathOf(it.folder) : '');
     info.append(s, u); info.onclick = () => openView(it);
     const cp = document.createElement('button'); cp.textContent = 'העתק'; cp.onclick = () => copyPw(it);
     li.append(info, cp); ul.append(li);
@@ -220,20 +220,43 @@ async function shrink(file) {
     return new Uint8Array(await blob.arrayBuffer());
   } finally { URL.revokeObjectURL(url); }
 }
+// כמה תמונות ברצף תחת שם אחד: אוספים (בזיכרון בלבד, מוקטנות) ואז שומרים הכול יחד
+let pending = [], addTo = null;
+function startPick() { picking = true; clearTimeout(idleT); $('p-file').click(); }
+$('m-photo').onclick = () => { addTo = null; pending = []; startPick(); };
+$('e-addimg').onclick = () => { addTo = editing; pending = []; startPick(); };
 $('p-file').onchange = async e => {
-  const f = e.target.files[0]; e.target.value = '';
-  if (!f) return;
-  if (!dk) return toast('הכספת ננעלה בזמן הצילום. פתח אותה ונסה שוב');
-  const title = await dialog('שם לתמונה (למשל: סיסמאות Gmail)', { input: true, value: 'תמונה ' + new Date().toLocaleDateString('he-IL') });
-  if (!title) return;
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) { if (!pending.length) addTo = null; return; }
+  if (!dk) { pending = []; addTo = null; return toast('הכספת ננעלה בזמן הצילום. פתח אותה ונסה שוב'); }
+  try {
+    for (let i = 0; i < files.length; i++) { toast('מעבד תמונה ' + (i + 1) + ' מתוך ' + files.length + '...'); pending.push(await shrink(files[i])); }
+  } catch (err) {
+    toast('קריאת התמונה נכשלה: ' + (err && err.name) + ' ' + (err && err.message ? err.message.slice(0, 60) : ''));
+    if (!pending.length) { addTo = null; return; }
+  }
+  afterPick();
+};
+async function afterPick() {
+  const save = await dialog('נבחרו ' + pending.length + ' תמונות. לשמור, או להוסיף עוד?', { ok: 'שמירה', no: 'הוספת תמונות' });
+  if (!save) return startPick();
+  let title = null;
+  if (!addTo) {
+    title = await dialog('שם לתמונות (למשל: סיסמאות Gmail)', { input: true, value: 'תמונות ' + new Date().toLocaleDateString('he-IL') });
+    if (!title) { pending = []; return toast('בוטל, לא נשמר כלום'); }
+  }
   try {
     toast('מצפין ושומר...');
-    const id = crypto.randomUUID();
-    await kv.set('img:' + id, await VC.encBytes(dk, await shrink(f)));
-    items.push({ id: crypto.randomUUID(), site: title, user: '', pw: '', kind: 'photo', imgs: [id], folder: cur });
-    await saveItems(); $('m-q').value = ''; renderList(); toast('נשמר בכספת. מחק את התמונה המקורית מהגלריה והדף מהשולחן');
+    const ids = [];
+    for (const bytes of pending) { const id = crypto.randomUUID(); await kv.set('img:' + id, await VC.encBytes(dk, bytes)); ids.push(id); }
+    const target = addTo;
+    if (target) target.imgs = (target.imgs || []).concat(ids);
+    else items.push({ id: crypto.randomUUID(), site: title, user: '', pw: '', kind: 'photo', imgs: ids, folder: cur });
+    await saveItems(); pending = []; addTo = null;
+    if (target) openView(target); else { $('m-q').value = ''; renderList(); }
+    toast('נשמר בכספת. מחק את התמונות המקוריות מהגלריה ואת הדף מהשולחן');
   } catch (err) { toast('שמירת התמונה נכשלה: ' + (err && err.name) + ' ' + (err && err.message ? err.message.slice(0, 60) : '')); }
-};
+}
 $('v-show').onclick = () => {
   const hidden = $('v-pw').textContent === '••••••••';
   $('v-pw').textContent = hidden ? viewing.pw : '••••••••';
@@ -251,6 +274,7 @@ function openEdit(it) {
   $('e-site').value = it ? it.site : ''; $('e-user').value = it ? it.user : ''; $('e-pw').value = it ? it.pw : '';
   $('e-pw').type = 'password'; $('e-del').hidden = !it;
   $('e-textpart').hidden = !!(it && it.kind === 'photo');
+  $('e-addimg').hidden = !(it && it.kind === 'photo');
   const sel = $('e-folder'); sel.textContent = '';
   const none = document.createElement('option'); none.value = ''; none.textContent = 'ללא תיקייה'; sel.append(none);
   folders.map(f => ({ id: f.id, p: pathOf(f.id) })).sort((a, b) => a.p.localeCompare(b.p)).forEach(f => {
