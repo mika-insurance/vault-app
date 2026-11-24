@@ -32,8 +32,12 @@ const db = new Promise((res, rej) => {
 });
 const kv = {
   async get(k) { const d = await db; return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); },
-  async set(k, v) { const d = await db; return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); }
+  async set(k, v) { const d = await db; return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); },
+  async del(k) { const d = await db; return new Promise((res, rej) => { const t = d.transaction('kv', 'readwrite'); t.objectStore('kv').delete(k); t.oncomplete = res; t.onerror = () => rej(t.error); }); },
+  async keys() { const d = await db; return new Promise((res, rej) => { const q = d.transaction('kv').objectStore('kv').getAllKeys(); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
 };
+let imgUrls = [];
+function clearImgs() { imgUrls.forEach(u => URL.revokeObjectURL(u)); imgUrls = []; const b = $('v-imgs'); if (b) b.textContent = ''; }
 
 function show(v) { views.forEach(n => $('v-' + n).hidden = n !== v); }
 // חלון דו-שיח פנימי (prompt/confirm של הדפדפן נחסמים באפליקציה מותקנת באייפון)
@@ -51,7 +55,7 @@ function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; s
 
 // ---- נעילה ----
 function lock() {
-  dk = null; items = []; folders = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null;
+  dk = null; items = []; folders = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null; clearImgs();
   $('m-q').value = ''; $('e-pw').value = ''; $('l-pw').value = '';
   $('m-list').textContent = '';
   show(vault ? 'lock' : 'setup');
@@ -146,8 +150,8 @@ function renderList() {
   for (const it of shown) {
     const li = document.createElement('li');
     const info = document.createElement('div'); info.className = 'info';
-    const s = document.createElement('b'); s.textContent = it.site;
-    const u = document.createElement('span'); u.textContent = it.user + (q && it.folder ? '  ·  ' + pathOf(it.folder) : '');
+    const s = document.createElement('b'); s.textContent = (it.kind === 'photo' ? '📷 ' : '') + it.site;
+    const u = document.createElement('span'); u.textContent = (it.kind === 'photo' ? 'תמונה מוצפנת' : it.user) + (q && it.folder ? '  ·  ' + pathOf(it.folder) : '');
     info.append(s, u); info.onclick = () => openView(it);
     const cp = document.createElement('button'); cp.textContent = 'העתק'; cp.onclick = () => copyPw(it);
     li.append(info, cp); ul.append(li);
@@ -174,13 +178,47 @@ async function backupWarn() {
 }
 
 // ---- צפייה (בלי אפשרות לשנות או למחוק) ----
-function openView(it) {
-  viewing = it;
+async function openView(it) {
+  viewing = it; clearImgs();
+  const photo = it.kind === 'photo';
   $('v-site').textContent = it.site; $('v-user').textContent = it.user || '—';
   $('v-folder').textContent = it.folder ? pathOf(it.folder) : 'ללא תיקייה';
   $('v-pw').textContent = '••••••••'; $('v-show').textContent = '👁 הצג סיסמה';
+  $('v-textpart').hidden = photo;
   show('view');
+  if (photo) {
+    for (const id of it.imgs || []) {
+      try {
+        const rec = await kv.get('img:' + id); if (!rec || viewing !== it) continue;
+        const url = URL.createObjectURL(new Blob([await VC.decBytes(dk, rec)], { type: 'image/jpeg' }));
+        imgUrls.push(url);
+        const im = document.createElement('img'); im.src = url; im.alt = it.site; $('v-imgs').append(im);
+      } catch (_) { toast('לא ניתן לפתוח את התמונה'); }
+    }
+  }
 }
+// ---- צילום דף ושמירה כתמונה מוצפנת ----
+$('m-photo').onclick = () => $('p-file').click();
+async function shrink(file) {
+  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  const sc = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+  return new Uint8Array(await blob.arrayBuffer());
+}
+$('p-file').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f || !dk) return;
+  const title = await dialog('שם לתמונה (למשל: סיסמאות Gmail)', { input: true, value: 'תמונה ' + new Date().toLocaleDateString('he-IL') });
+  if (!title) return;
+  try {
+    toast('מצפין ושומר...');
+    const id = crypto.randomUUID();
+    await kv.set('img:' + id, await VC.encBytes(dk, await shrink(f)));
+    items.push({ id: crypto.randomUUID(), site: title, user: '', pw: '', kind: 'photo', imgs: [id], folder: cur });
+    await saveItems(); $('m-q').value = ''; renderList(); toast('נשמר בכספת. מחק את התמונה המקורית מהגלריה והדף מהשולחן');
+  } catch (_) { toast('שמירת התמונה נכשלה'); }
+};
 $('v-show').onclick = () => {
   const hidden = $('v-pw').textContent === '••••••••';
   $('v-pw').textContent = hidden ? viewing.pw : '••••••••';
@@ -188,8 +226,8 @@ $('v-show').onclick = () => {
 };
 $('v-copy').onclick = () => copyPw(viewing);
 $('v-copyu').onclick = async () => { try { await navigator.clipboard.writeText(viewing.user); toast('שם המשתמש הועתק'); } catch (_) { toast('ההעתקה נחסמה'); } };
-$('v-editbtn').onclick = () => { $('v-pw').textContent = ''; openEdit(viewing); };
-$('v-back').onclick = () => { $('v-pw').textContent = ''; viewing = null; show('main'); renderList(); };
+$('v-editbtn').onclick = () => { $('v-pw').textContent = ''; clearImgs(); openEdit(viewing); };
+$('v-back').onclick = () => { $('v-pw').textContent = ''; viewing = null; clearImgs(); show('main'); renderList(); };
 
 // ---- עריכה ----
 function openEdit(it) {
@@ -197,6 +235,7 @@ function openEdit(it) {
   $('e-title').textContent = it ? 'עריכה' : 'רשומה חדשה';
   $('e-site').value = it ? it.site : ''; $('e-user').value = it ? it.user : ''; $('e-pw').value = it ? it.pw : '';
   $('e-pw').type = 'password'; $('e-del').hidden = !it;
+  $('e-textpart').hidden = !!(it && it.kind === 'photo');
   const sel = $('e-folder'); sel.textContent = '';
   const none = document.createElement('option'); none.value = ''; none.textContent = 'ללא תיקייה'; sel.append(none);
   folders.map(f => ({ id: f.id, p: pathOf(f.id) })).sort((a, b) => a.p.localeCompare(b.p)).forEach(f => {
@@ -229,21 +268,26 @@ $('e-gen').onclick = () => { $('e-pw').value = VC.gen(20); $('e-pw').type = 'tex
 $('e-cancel').onclick = () => { $('e-pw').value = ''; if (editing) openView(editing); else show('main'); };
 $('e-save').onclick = async () => {
   const site = $('e-site').value.trim(), user = $('e-user').value.trim(), pw = $('e-pw').value;
-  if (!site || !pw) return toast('חסר אתר או סיסמה');
+  const isPhoto = !!(editing && editing.kind === 'photo');
+  if (!site || (!isPhoto && !pw)) return toast(isPhoto ? 'חסר שם' : 'חסר אתר או סיסמה');
   const folder = $('e-folder').value || null;
-  if (editing) Object.assign(editing, { site, user, pw, folder });
+  if (editing && isPhoto) Object.assign(editing, { site, folder });
+  else if (editing) Object.assign(editing, { site, user, pw, folder });
   else items.push({ id: crypto.randomUUID(), site, user, pw, folder });
   cur = folder;
   await saveItems(); $('e-pw').value = ''; show('main'); $('m-q').value = ''; renderList(); touch();
 };
 $('e-del').onclick = async () => {
   if (!editing || !(await dialog('למחוק את הרשומה?'))) return;
+  for (const id of editing.imgs || []) await kv.del('img:' + id);
   items = items.filter(i => i !== editing); await saveItems(); $('e-pw').value = ''; show('main'); renderList();
 };
 
 // ---- הגדרות: גיבוי ו-Face ID ----
 $('t-exp').onclick = async () => {
-  const blob = new Blob([JSON.stringify({ v: vault.v, salt: vault.salt, iter: vault.iter, wrapPw: vault.wrapPw, data: vault.data })], { type: 'application/json' });
+  const imgs = {};
+  for (const k of await kv.keys()) if (String(k).startsWith('img:')) imgs[String(k).slice(4)] = await kv.get(k);
+  const blob = new Blob([JSON.stringify({ v: vault.v, salt: vault.salt, iter: vault.iter, wrapPw: vault.wrapPw, data: vault.data, imgs })], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob); a.download = 'vault-backup-' + new Date().toISOString().slice(0, 10) + '.json';
   document.body.append(a); a.click(); a.remove();
@@ -256,6 +300,8 @@ async function importFile(file, fromSetup) {
     const v = JSON.parse(await file.text());
     if (v.v !== 1 || !v.salt || !v.wrapPw || !v.data) throw new Error('bad');
     if (!fromSetup && !(await dialog('הייבוא יחליף את כל הכספת הקיימת. להמשיך?'))) return;
+    for (const k of await kv.keys()) if (String(k).startsWith('img:')) await kv.del(k);
+    for (const [id, rec] of Object.entries(v.imgs || {})) if (rec && rec.iv && rec.ct) await kv.set('img:' + id, rec);
     vault = { v: v.v, salt: v.salt, iter: v.iter, wrapPw: v.wrapPw, data: v.data };
     await persistVault();
     await kv.set('credId', null);

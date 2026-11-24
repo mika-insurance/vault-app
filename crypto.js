@@ -62,6 +62,8 @@ const VC = (() => {
     while (out.length < len) for (const b of rnd(len)) { if (b < lim && out.length < len) out += set[b % set.length]; }
     return out;
   }
-  return { create, unlockPw, unlockPrf, addPrf, readItems, writeItems, gen, b64, unb64, rnd };
+  const encBytes = (key, bytes) => seal(key, bytes);
+  const decBytes = (key, o) => open(key, o);
+  return { create, unlockPw, unlockPrf, addPrf, readItems, writeItems, encBytes, decBytes, gen, b64, unb64, rnd };
 })();
 if (typeof module !== 'undefined') module.exports = VC;
