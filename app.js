@@ -51,7 +51,7 @@ function dialog(msg, { input = false, value = '' } = {}) {
     $('d-no').onclick = () => done(input ? '' : false);
   });
 }
-function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; setTimeout(() => e.hidden = true, 2500); }
+function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => e.hidden = true, 6000); }
 
 // ---- נעילה ----
 function lock() {
@@ -62,8 +62,11 @@ function lock() {
 }
 function touch() { clearTimeout(idleT); if (dk) idleT = setTimeout(lock, IDLE_MS); }
 ['click', 'keydown', 'touchstart'].forEach(e => document.addEventListener(e, touch, { passive: true }));
-document.addEventListener('visibilitychange', () => { if (document.hidden && dk) lock(); });
-window.addEventListener('pagehide', () => { if (dk) lock(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && dk && !picking) lock();
+  else if (!document.hidden && picking) setTimeout(() => { picking = false; touch(); }, 8000);
+});
+window.addEventListener('pagehide', () => { if (dk && !picking) lock(); });
 
 async function persistVault() { await kv.set('vault', vault); }
 async function saveItems() { await VC.writeItems(vault, dk, { folders, items }); await persistVault(); }
@@ -198,17 +201,29 @@ async function openView(it) {
   }
 }
 // ---- צילום דף ושמירה כתמונה מוצפנת ----
-$('m-photo').onclick = () => $('p-file').click();
+// בזמן שהמצלמה או הגלריה פתוחות האפליקציה יוצאת לרקע: לא נועלים אז, ומחדשים את הטיימר בחזרה
+let picking = false;
+$('m-photo').onclick = () => { picking = true; clearTimeout(idleT); $('p-file').click(); };
+window.addEventListener('focus', () => { if (picking) setTimeout(() => { picking = false; touch(); }, 1500); });
 async function shrink(file) {
-  const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
-  const sc = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
-  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
-  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
-  return new Uint8Array(await blob.arrayBuffer());
+  // טעינה דרך אלמנט תמונה: מטפל בכיוון (EXIF) ובפורמטים של האייפון בצורה הכי תואמת
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('decode')); i.src = url; });
+    const w0 = img.naturalWidth, h0 = img.naturalHeight;
+    if (!w0 || !h0) throw new Error('empty');
+    const sc = Math.min(1, 1800 / Math.max(w0, h0));
+    const c = document.createElement('canvas'); c.width = Math.round(w0 * sc); c.height = Math.round(h0 * sc);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+    if (!blob) throw new Error('toBlob');
+    return new Uint8Array(await blob.arrayBuffer());
+  } finally { URL.revokeObjectURL(url); }
 }
 $('p-file').onchange = async e => {
-  const f = e.target.files[0]; e.target.value = ''; if (!f || !dk) return;
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  if (!dk) return toast('הכספת ננעלה בזמן הצילום. פתח אותה ונסה שוב');
   const title = await dialog('שם לתמונה (למשל: סיסמאות Gmail)', { input: true, value: 'תמונה ' + new Date().toLocaleDateString('he-IL') });
   if (!title) return;
   try {
@@ -217,7 +232,7 @@ $('p-file').onchange = async e => {
     await kv.set('img:' + id, await VC.encBytes(dk, await shrink(f)));
     items.push({ id: crypto.randomUUID(), site: title, user: '', pw: '', kind: 'photo', imgs: [id], folder: cur });
     await saveItems(); $('m-q').value = ''; renderList(); toast('נשמר בכספת. מחק את התמונה המקורית מהגלריה והדף מהשולחן');
-  } catch (_) { toast('שמירת התמונה נכשלה'); }
+  } catch (err) { toast('שמירת התמונה נכשלה: ' + (err && err.name) + ' ' + (err && err.message ? err.message.slice(0, 60) : '')); }
 };
 $('v-show').onclick = () => {
   const hidden = $('v-pw').textContent === '••••••••';
