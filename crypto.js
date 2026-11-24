@@ -3,7 +3,12 @@
 const VC = (() => {
   const enc = new TextEncoder(), dec = new TextDecoder();
   const ITER = 600000;
-  const b64 = b => btoa(String.fromCharCode(...new Uint8Array(b)));
+  const b64 = b => {
+    // בחלקים: הפצת מערך גדול ל-fromCharCode קורסת בתמונות אמיתיות (מאות KB ומעלה)
+    const u = new Uint8Array(b); let s = '';
+    for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+    return btoa(s);
+  };
   const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
   const rnd = n => crypto.getRandomValues(new Uint8Array(n));
 
