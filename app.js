@@ -182,7 +182,7 @@ async function backupWarn() {
 
 // ---- צפייה (בלי אפשרות לשנות או למחוק) ----
 async function openView(it) {
-  viewing = it; clearImgs();
+  viewing = it; clearImgs(); window.scrollTo(0, 0);
   const photo = it.kind === 'photo';
   $('v-site').textContent = it.site; $('v-user').textContent = it.user || '—';
   $('v-folder').textContent = it.folder ? pathOf(it.folder) : 'ללא תיקייה';
@@ -264,8 +264,10 @@ $('v-show').onclick = () => {
 };
 $('v-copy').onclick = () => copyPw(viewing);
 $('v-copyu').onclick = async () => { try { await navigator.clipboard.writeText(viewing.user); toast('שם המשתמש הועתק'); } catch (_) { toast('ההעתקה נחסמה'); } };
-$('v-editbtn').onclick = () => { $('v-pw').textContent = ''; clearImgs(); openEdit(viewing); };
-$('v-back').onclick = () => { $('v-pw').textContent = ''; viewing = null; clearImgs(); show('main'); renderList(); };
+const goEdit = () => { $('v-pw').textContent = ''; clearImgs(); openEdit(viewing); };
+$('v-editbtn').onclick = goEdit; $('v-edit2').onclick = goEdit;
+const goBack = () => { $('v-pw').textContent = ''; viewing = null; clearImgs(); show('main'); renderList(); window.scrollTo(0, 0); };
+$('v-back').onclick = goBack; $('v-back2').onclick = goBack;
 
 // ---- עריכה ----
 function openEdit(it) {
@@ -275,6 +277,8 @@ function openEdit(it) {
   $('e-pw').type = 'password'; $('e-del').hidden = !it;
   $('e-textpart').hidden = !!(it && it.kind === 'photo');
   $('e-addimg').hidden = !(it && it.kind === 'photo');
+  $('e-site').placeholder = (it && it.kind === 'photo') ? 'שם התמונות' : 'אתר';
+  window.scrollTo(0, 0);
   const sel = $('e-folder'); sel.textContent = '';
   const none = document.createElement('option'); none.value = ''; none.textContent = 'ללא תיקייה'; sel.append(none);
   folders.map(f => ({ id: f.id, p: pathOf(f.id) })).sort((a, b) => a.p.localeCompare(b.p)).forEach(f => {
