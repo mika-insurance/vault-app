@@ -108,10 +108,11 @@
   <input id="o-site" class="code" placeholder="אתר" dir="ltr" lang="en" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
   <input id="o-user" class="code" placeholder="שם משתמש / אימייל" dir="ltr" lang="en" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
   <input id="o-pw" class="code" placeholder="סיסמה" dir="ltr" lang="en" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+  <img id="o-crop" class="crop" alt="הסיסמה כפי שהיא בתמונה" hidden>
   <select id="o-folder"></select>
   <button id="o-ok" class="primary">אישור ושמירה</button>
   <button id="o-more">שמירה + עוד רשומה מאותה תמונה</button>
-  <button id="o-skip">דילוג (שמירה כתמונה בלבד)</button>
+  <button id="o-skip">דילוג על הרשומה</button>
   <details><summary>כל השורות שנקראו</summary><div id="o-lines"></div></details>
   <button id="o-all">סיום: את השאר לשמור כתמונות</button>
 </section>
@@ -123,7 +124,7 @@
   <button id="t-exp">ייצוא גיבוי מוצפן</button>
   <label class="btn">ייבוא גיבוי <input id="t-imp" type="file" accept=".json,application/json" hidden></label>
   <p id="t-msg"></p>
-  <p class="mut">גרסה 13</p>
+  <p class="mut">גרסה 14</p>
   <button id="t-back">חזרה</button>
 </section>
 
@@ -141,6 +142,7 @@
 <div id="toast" hidden></div>
 <script src="crypto.js"></script>
 <script src="app.js"></script>
+<script src="layout.js"></script>
 <script src="ocr.js"></script>
 </body>
 </html>

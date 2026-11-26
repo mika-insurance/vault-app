@@ -45,46 +45,122 @@ function parseOcr(text) {
 if (typeof module !== 'undefined') module.exports = { parseOcr };
 
 if (typeof document !== 'undefined') (() => {
-  let worker = null, current = null, curUrl = null, token = 0, lastField = null;
+  // שני מנועים: עברית+אנגלית לכותרות, ואנגלית בלבד לשמות משתמש וסיסמאות (פחות בלבול)
+  const workers = {};
+  let current = null, curUrl = null, token = 0, lastField = null, records = [], idx = 0;
 
-  // הכנה לקריאה: אפור, רקע לבן וכתב כהה (גם במסך כהה), חיזוק כותרות בהירות והקטנה לרוחב שנקרא הכי טוב
-  async function prepare(blob) {
+  function loadImage(blob) {
     const url = URL.createObjectURL(blob);
-    try {
-      const im = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-      const sc = Math.min(1, 830 / im.naturalWidth);
-      const c = document.createElement('canvas'); c.width = Math.round(im.naturalWidth * sc); c.height = Math.round(im.naturalHeight * sc);
-      const g = c.getContext('2d'); g.drawImage(im, 0, 0, c.width, c.height);
-      const d = g.getImageData(0, 0, c.width, c.height), p = d.data, hist = new Array(256).fill(0);
-      for (let i = 0; i < p.length; i += 4) { p[i] = (p[i] * 77 + p[i + 1] * 150 + p[i + 2] * 29) >> 8; hist[p[i]]++; }
-      const bg = hist.indexOf(Math.max(...hist));
-      for (let i = 0; i < p.length; i += 4) p[i] = p[i + 1] = p[i + 2] = 255 - Math.min(255, Math.abs(p[i] - bg) * 2);
-      g.putImageData(d, 0, 0);
-      return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('prepare')), 'image/png'));
-    } finally { URL.revokeObjectURL(url); }
+    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; })
+      .finally(() => URL.revokeObjectURL(url));
+  }
+  const toBlob = c => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('prepare')), 'image/png'));
+  // אפור, רקע לבן וכתב כהה (גם במסך כהה) עם חיזוק טקסט בהיר
+  function clean(g, w, h) {
+    const d = g.getImageData(0, 0, w, h), p = d.data, hist = new Array(256).fill(0);
+    for (let i = 0; i < p.length; i += 4) { p[i] = (p[i] * 77 + p[i + 1] * 150 + p[i + 2] * 29) >> 8; hist[p[i]]++; }
+    const bg = hist.indexOf(Math.max(...hist));
+    for (let i = 0; i < p.length; i += 4) p[i] = p[i + 1] = p[i + 2] = 255 - Math.min(255, Math.abs(p[i] - bg) * 2);
+    g.putImageData(d, 0, 0);
+  }
+  // חיתוך שורה אחת, בגודל שנקרא הכי טוב, עם שוליים לבנים
+  function cut(im, r) {
+    const m = Math.round(r.h * .25), sx = Math.max(0, r.x - m), sy = Math.max(0, r.y - m);
+    const sw = Math.min(im.naturalWidth - sx, r.w + 2 * m), sh = Math.min(im.naturalHeight - sy, r.h + 2 * m);
+    const sc = Math.min(2, 48 / r.h), dw = Math.max(1, Math.round(sw * sc)), dh = Math.max(1, Math.round(sh * sc)), pad = 24;
+    const inner = document.createElement('canvas'); inner.width = dw; inner.height = dh;
+    const ig = inner.getContext('2d'); ig.drawImage(im, sx, sy, sw, sh, 0, 0, dw, dh); clean(ig, dw, dh);
+    const c = document.createElement('canvas'); c.width = dw + 2 * pad; c.height = dh + 2 * pad;
+    const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(inner, pad, pad);
+    return c;
   }
 
-  async function getWorker() {
-    if (worker) return worker;
-    if (!window.Tesseract) await new Promise((res, rej) => {
-      const s = document.createElement('script'); s.src = 'vendor/tesseract.min.js';
-      s.onload = res; s.onerror = () => { s.remove(); rej(new Error('ספריית הקריאה לא נטענה')); };
-      document.head.append(s);
-    });
-    const base = new URL('vendor/', location.href).href;
-    worker = Tesseract.createWorker(['eng', 'heb'], 1, {
-      workerPath: base + 'worker.min.js', corePath: base.slice(0, -1), langPath: base.slice(0, -1),
-      workerBlobURL: false, cacheMethod: 'none'
-    }).catch(e => { worker = null; throw e; });
-    return worker;
+  function getWorker(kind) {
+    if (workers[kind]) return workers[kind];
+    const p = (async () => {
+      if (!window.Tesseract) await new Promise((res, rej) => {
+        const s = document.createElement('script'); s.src = 'vendor/tesseract.min.js';
+        s.onload = res; s.onerror = () => { s.remove(); rej(new Error('ספריית הקריאה לא נטענה')); };
+        document.head.append(s);
+      });
+      const base = new URL('vendor/', location.href).href;
+      return Tesseract.createWorker(kind === 'he' ? ['eng', 'heb'] : ['eng'], 1, {
+        workerPath: base + 'worker.min.js', corePath: base.slice(0, -1), langPath: base.slice(0, -1),
+        workerBlobURL: false, cacheMethod: 'none'
+      });
+    })();
+    workers[kind] = p; p.catch(() => { delete workers[kind]; });
+    return p;
   }
-  function stopWorker() { const w = worker; worker = null; if (w) Promise.resolve(w).then(x => x.terminate()).catch(() => {}); }
+  function stopWorker() { for (const k of Object.keys(workers)) { const p = workers[k]; delete workers[k]; p.then(w => w.terminate()).catch(() => {}); } }
+  const tidy = t => String(t || '').replace(/[‎‏‪-‮]/g, '').replace(/\s+/g, ' ').trim();
+  async function read(kind, canvas, mode) {
+    const w = await getWorker(kind);
+    if (w.mode !== mode) { await w.setParameters({ tessedit_pageseg_mode: mode }); w.mode = mode; }
+    const { data } = await w.recognize(await toBlob(canvas));
+    return data.text;
+  }
 
+  // קורא תמונה: קודם לפי מבנה כותרת-כחולה/ערך-שחור, ואם אין כזה, קריאה כללית
+  async function readImage(blob, alive, progress) {
+    const im = await loadImage(blob);
+    const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
+    const g = c.getContext('2d', { willReadFrequently: true }); g.drawImage(im, 0, 0);
+    const rows = Layout.findRows(g.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+    const blue = rows.filter(r => r.color === 'blue');
+    if (blue.length) {
+      const lines = [];
+      // כותרות קודם, כדי לזהות את תפריט הפעולות ולא לקרוא את מה שמתחתיו
+      for (const r of blue) {
+        if (!alive()) return null;
+        r.text = tidy(await read('he', cut(im, r), '7'));
+        if (/siri|מועדפים/i.test(r.text)) break;
+      }
+      for (const r of rows) if (r.text === undefined) r.text = '';
+      const { fields, firstY } = Layout.pairRows(rows);
+      if (fields.length) {
+        // כותרת העמוד: השורה השחורה הגדולה ביותר מעל הכותרת הראשונה, מתחת לשורת השעון
+        let title = '';
+        const above = rows.filter(r => r.color === 'text' && r.y < firstY && r.y > c.height * .055).sort((a, b) => b.h - a.h).slice(0, 3);
+        for (const r of above) {
+          if (!alive()) return null;
+          const t = tidy(await read('he', cut(im, r), '7')).replace(/עריכה|[<>‹›…|]|\.{2,}/g, '').trim();
+          if (/[A-Za-zא-ת]{2}/.test(t)) { title = t; break; }
+        }
+        const list = [];
+        for (const f of fields) {
+          if (!alive()) return null;
+          progress(list.length + 1, fields.length);
+          const label = tidy(f.label.map(r => r.text).join(' '));
+          // כתובת מייל בכותרת נקראת מדויק יותר במנוע האנגלי
+          let fixed = label;
+          if (label.includes('@')) for (const r of f.label) {
+            const m = tidy(await read('en', cut(im, r), '7')).match(/[^\s@:]+@[^\s@]+\.[A-Za-z]{2,}/);
+            if (m) fixed = fixed.replace(/[^\s@:]+@\S+/, m[0]);
+          }
+          const crop = cut(im, f.value);
+          let value = tidy(await read('en', crop, '7'));
+          const he = tidy(await read('he', crop, '7'));
+          const letters = (he.match(/[א-ת]/g) || []).length;
+          if (letters >= 2 && letters > he.replace(/\s/g, '').length / 2) value = he;
+          list.push({ label: fixed, value, crop: crop.toDataURL('image/png') });
+          lines.push(fixed, value);
+        }
+        return { records: Layout.buildRecords(title, list), lines: [title, ...lines].filter(Boolean) };
+      }
+    }
+    const sc = Math.min(1, 830 / im.naturalWidth);
+    const s = document.createElement('canvas'); s.width = Math.round(im.naturalWidth * sc); s.height = Math.round(im.naturalHeight * sc);
+    const sg = s.getContext('2d'); sg.drawImage(im, 0, 0, s.width, s.height); clean(sg, s.width, s.height);
+    const p = parseOcr(await read('he', s, '3'));
+    return { records: [{ site: p.site, user: p.user, pw: p.pw }], lines: p.lines };
+  }
+
+  function clearFields() { ['o-site', 'o-user', 'o-pw'].forEach(i => $(i).value = ''); $('o-crop').hidden = true; $('o-crop').removeAttribute('src'); }
   function clearScreen() {
-    token++; current = null; lastField = null;
+    token++; current = null; lastField = null; records = []; idx = 0;
     if (curUrl) URL.revokeObjectURL(curUrl); curUrl = null;
-    $('o-img').removeAttribute('src');
-    ['o-site', 'o-user', 'o-pw'].forEach(i => $(i).value = '');
+    $('o-img').removeAttribute('src'); clearFields();
     $('o-lines').textContent = ''; $('o-status').textContent = '';
   }
   // נקרא בנעילה: מוחק מהמסך ומהזיכרון כל מה שנקרא
@@ -130,7 +206,7 @@ if (typeof document !== 'undefined') (() => {
     clearScreen();
     if (!dk) return;
     if (!queue.length) { stopWorker(); show('main'); renderList(); return; }
-    const q = queue[0], my = token;
+    const q = queue[0], my = token, alive = () => my === token && !!dk;
     current = q; show('ocr'); window.scrollTo(0, 0); busy(true); touch();
     $('o-count').textContent = 'נשארו ' + queue.length + ' תמונות';
     fillFolders($('o-folder'), q.folder);
@@ -139,34 +215,41 @@ if (typeof document !== 'undefined') (() => {
       const rec = await kv.get('img:' + q.imgId);
       blob = new Blob([await VC.decBytes(dk, rec)], { type: 'image/jpeg' });
     } catch (_) {
-      if (my !== token || !dk) return;
+      if (!alive()) return;
       queue.shift(); await saveItems(); toast('תמונה אחת לא נפתחה והוצאה מהתור'); return next();
     }
-    if (my !== token) return;
+    if (!alive()) return;
     curUrl = URL.createObjectURL(blob); $('o-img').src = curUrl;
     $('o-status').textContent = 'קורא את התמונה...';
     // בזמן קריאה לא ננעלים מחוסר פעילות
-    const keep = setInterval(() => { if (my === token) touch(); }, 10000);
-    const limit = setTimeout(() => clearInterval(keep), 120000);
+    const keep = setInterval(() => { if (alive()) touch(); }, 10000);
+    const limit = setTimeout(() => clearInterval(keep), 180000);
     try {
-      const w = await getWorker();
-      const { data } = await w.recognize(await prepare(blob));
-      if (my !== token) return;
-      const p = parseOcr(data.text);
-      // לא דורסים מה שכבר הוקלד בזמן ההמתנה
-      for (const [id, v] of [['o-site', p.site], ['o-user', p.user], ['o-pw', p.pw]]) if (!$(id).value) $(id).value = v;
-      showLines(p.lines);
-      $('o-status').textContent = /[0Oo1lI|]/.test($('o-pw').value)
-        ? 'בדוק היטב בסיסמה: אפס מול O, אחת מול l ו-I'
-        : 'בדוק מול התמונה ותקן אם צריך';
+      const out = await readImage(blob, alive, (n, of) => { $('o-status').textContent = 'קורא שדה ' + n + ' מתוך ' + of + '...'; });
+      if (!out || !alive()) return;
+      records = out.records.length ? out.records : [{ site: '', user: '', pw: '' }];
+      showLines(out.lines);
+      // אם נעצר באמצע תמונה, ממשיכים מהרשומה שאחרי האחרונה שטופלה
+      idx = Math.min(q.done || 0, records.length - 1);
+      showRecord();
     } catch (e) {
-      if (my !== token) return;
-      stopWorker();
+      if (!alive()) return;
+      stopWorker(); records = [{ site: '', user: '', pw: '' }];
       $('o-status').textContent = 'הקריאה נכשלה. אפשר להקליד ידנית או לשמור כתמונה.';
     } finally {
       clearInterval(keep); clearTimeout(limit);
       if (my === token) { busy(false); touch(); }
     }
+  }
+  function showRecord() {
+    const r = records[idx];
+    clearFields();
+    $('o-site').value = r.site || ''; $('o-user').value = r.user || ''; $('o-pw').value = r.pw || '';
+    if (r.crop) { $('o-crop').src = r.crop; $('o-crop').hidden = false; }
+    $('o-count').textContent = 'נשארו ' + queue.length + ' תמונות' + (records.length > 1 ? ' · רשומה ' + (idx + 1) + ' מתוך ' + records.length + ' בתמונה הזאת' : '');
+    $('o-status').textContent = /[0Oo1lI|]/.test(r.pw || '')
+      ? 'בדוק היטב בסיסמה: אפס מול O, אחת מול l ו-I'
+      : 'בדוק מול התמונה ותקן אם צריך';
   }
   // שורות שנקראו: לחיצה מכניסה את השורה לשדה שנבחר אחרון
   function showLines(lines) {
@@ -182,12 +265,24 @@ if (typeof document !== 'undefined') (() => {
   }
   ['o-site', 'o-user', 'o-pw'].forEach(i => $(i).onfocus = () => lastField = $(i));
 
-  // מוציא את התמונה מרשומת התמונות המקורית (התמונה עצמה עוברת לרשומה החדשה)
+  // מוציא את התמונה מרשומת התמונות המקורית (התמונה עצמה עוברת לרשומות החדשות)
   function detach(q) {
     const src = q.from && items.find(i => i.id === q.from);
     if (!src || src.kind !== 'photo') return;
     src.imgs = (src.imgs || []).filter(x => x !== q.imgId);
     if (!src.imgs.length) items = items.filter(i => i !== src);
+  }
+  // מעבר לרשומה הבאה באותה תמונה, או סיום התמונה
+  async function advance() {
+    const q = current;
+    q.done = idx + 1;
+    if (q.done < records.length) {
+      await saveItems();
+      if (!dk) return;
+      idx++; showRecord(); busy(false); touch(); window.scrollTo(0, 0); return;
+    }
+    if (q.saved) detach(q); else keepAsPhoto(q);
+    queue.shift(); await saveItems(); next();
   }
   async function approve(more) {
     const q = current; if (!q || !dk) return;
@@ -196,18 +291,15 @@ if (typeof document !== 'undefined') (() => {
     busy(true);
     const folder = $('o-folder').value || null;
     items.push({ id: crypto.randomUUID(), site, user, pw, folder, imgs: [q.imgId] });
-    detach(q);
     q.saved = true; q.folder = folder;
-    if (!more) queue.shift();
-    await saveItems();
-    if (!dk) return;
     if (more) {
-      ['o-site', 'o-user', 'o-pw'].forEach(i => $(i).value = ''); busy(false); touch(); window.scrollTo(0, 0);
-      return toast('נשמר. מלא את הרשומה הבאה מאותה תמונה');
+      await saveItems(); if (!dk) return;
+      clearFields(); busy(false); touch(); window.scrollTo(0, 0);
+      return toast('נשמר. מלא את הרשומה הנוספת מאותה תמונה');
     }
-    toast('נשמר'); next();
+    toast('נשמר'); await advance();
   }
-  // דילוג: תמונה מהגלריה נשמרת כרשומת תמונה; תמונה שכבר בכספת נשארת במקומה
+  // תמונה מהגלריה שלא נשמרה ממנה שום רשומה נשמרת כרשומת תמונה; תמונה שכבר בכספת נשארת במקומה
   function keepAsPhoto(q) {
     if (q.from || q.saved) return;
     const name = (current === q && $('o-site').value.trim()) || 'תמונה לבדיקה ' + new Date().toLocaleDateString('he-IL');
@@ -216,13 +308,11 @@ if (typeof document !== 'undefined') (() => {
   }
   $('o-ok').onclick = () => approve(false);
   $('o-more').onclick = () => approve(true);
-  $('o-skip').onclick = async () => {
-    const q = current; if (!q || !dk) return;
-    busy(true); keepAsPhoto(q); queue.shift(); await saveItems(); next();
-  };
+  $('o-skip').onclick = async () => { if (!current || !dk) return; busy(true); await advance(); };
   $('o-stop').onclick = () => { clearScreen(); stopWorker(); show('main'); renderList(); window.scrollTo(0, 0); };
   $('o-all').onclick = async () => {
     if (!(await dialog('לסיים בלי לקרוא את שאר התמונות? הן יישמרו כתמונות.')) || !dk) return;
-    queue.forEach(keepAsPhoto); queue = []; await saveItems(); next();
+    queue.forEach(q => { if (q.saved) detach(q); else keepAsPhoto(q); }); queue = []; await saveItems(); next();
   };
 })();
+
