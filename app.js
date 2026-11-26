@@ -1,13 +1,14 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const views = ['setup', 'lock', 'main', 'view', 'edit', 'set'];
-let viewing = null, vault = null, dk = null, items = [], folders = [], cur = null, needSave = false, editing = null, idleT = null, clipT = null;
+const views = ['setup', 'lock', 'main', 'view', 'edit', 'set', 'ocr'];
+let viewing = null, vault = null, dk = null, items = [], folders = [], queue = [], cur = null, needSave = false, editing = null, idleT = null, clipT = null;
 const DEF_FOLDERS = ['חשבונות דואר אלקטרוני', 'כרטיסי אשראי', 'בנקים', 'אתרים'];
 // טעינת נתונים. תומך גם בפורמט הישן (מערך רשומות בלבד)
 function load(d) {
   if (Array.isArray(d)) d = { folders: null, items: d };
   d = d || { folders: null, items: [] };
   items = (d.items || []).map(i => ({ ...i, folder: i.folder || null }));
+  queue = d.queue || [];
   if (d.folders) folders = d.folders;
   else { folders = DEF_FOLDERS.map(n => ({ id: crypto.randomUUID(), name: n, parent: null })); needSave = true; }
   cur = null;
@@ -55,7 +56,8 @@ function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; c
 
 // ---- נעילה ----
 function lock() {
-  dk = null; items = []; folders = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null; clearImgs(); pending = []; addTo = null;
+  closePick(); if (window.ocrReset) ocrReset();
+  dk = null; items = []; folders = []; queue = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null; clearImgs(); pending = []; addTo = null;
   $('m-q').value = ''; $('e-pw').value = ''; $('l-pw').value = '';
   $('m-list').textContent = '';
   show(vault ? 'lock' : 'setup');
@@ -69,7 +71,34 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('pagehide', () => { if (dk && !picking) lock(); });
 
 async function persistVault() { await kv.set('vault', vault); }
-async function saveItems() { await VC.writeItems(vault, dk, { folders, items }); await persistVault(); }
+async function saveItems() { await VC.writeItems(vault, dk, { folders, items, queue }); await persistVault(); }
+
+// ---- בחירת תיקייה מרשימה. מחזיר מזהה, null (ללא תיקייה) או undefined (ביטול) ----
+let pickDone = null;
+function closePick(v) { const d = pickDone; pickDone = null; $('pick').hidden = true; $('k-list').textContent = ''; if (d) d(v); }
+function pickFolder(msg, current) {
+  closePick();
+  return new Promise(res => {
+    pickDone = res; $('k-msg').textContent = msg;
+    const list = [{ id: null, p: 'ללא תיקייה' }].concat(folders.map(f => ({ id: f.id, p: pathOf(f.id) })).sort((a, b) => a.p.localeCompare(b.p)));
+    for (const f of list) {
+      const b = document.createElement('button');
+      b.textContent = (f.id === (current || null) ? '✓ ' : '') + '📁 ' + f.p;
+      b.onclick = () => closePick(f.id);
+      $('k-list').append(b);
+    }
+    $('pick').hidden = false;
+  });
+}
+$('k-no').onclick = () => closePick();
+function fillFolders(sel, value) {
+  sel.textContent = '';
+  const none = document.createElement('option'); none.value = ''; none.textContent = 'ללא תיקייה'; sel.append(none);
+  folders.map(f => ({ id: f.id, p: pathOf(f.id) })).sort((a, b) => a.p.localeCompare(b.p)).forEach(f => {
+    const o = document.createElement('option'); o.value = f.id; o.textContent = f.p; sel.append(o);
+  });
+  sel.value = value || ''; if (sel.selectedIndex < 0) sel.value = '';
+}
 
 // ---- הקמה ----
 $('s-go').onclick = async () => {
@@ -130,6 +159,8 @@ function renderList() {
   const inF = !q && !!cur;
   $('m-renf').hidden = $('m-delf').hidden = !inF;
   $('m-newf').hidden = !!q;
+  $('m-resume').hidden = !queue.length;
+  $('m-resume').textContent = '▶ המשך קריאת תמונות (נשארו ' + queue.length + ')';
   if (inF) {
     const b = document.createElement('button'); b.className = 'crumbbtn';
     b.textContent = '→ ' + pathOf(cur) + ' (חזרה)';
@@ -188,31 +219,45 @@ async function openView(it) {
   $('v-folder').textContent = it.folder ? pathOf(it.folder) : 'ללא תיקייה';
   $('v-pw').textContent = '••••••••'; $('v-show').textContent = '👁 הצג סיסמה';
   $('v-textpart').hidden = photo;
+  $('v-ocrbtn').hidden = !photo;
   show('view');
-  if (photo) {
-    for (const id of it.imgs || []) {
-      try {
-        const rec = await kv.get('img:' + id); if (!rec || viewing !== it) continue;
-        const url = URL.createObjectURL(new Blob([await VC.decBytes(dk, rec)], { type: 'image/jpeg' }));
-        imgUrls.push(url);
-        const im = document.createElement('img'); im.src = url; im.alt = it.site; $('v-imgs').append(im);
-      } catch (_) { toast('לא ניתן לפתוח את התמונה'); }
-    }
+  // ברשומה מוקלדת התמונה המקורית מוצגת רק לפי בקשה, כדי שהסיסמה שבה לא תיחשף
+  $('v-showimg').hidden = photo || !(it.imgs || []).length;
+  if (photo) await showImgs(it);
+}
+async function showImgs(it) {
+  clearImgs();
+  for (const id of it.imgs || []) {
+    try {
+      const rec = await kv.get('img:' + id); if (!rec || viewing !== it) continue;
+      const url = URL.createObjectURL(new Blob([await VC.decBytes(dk, rec)], { type: 'image/jpeg' }));
+      imgUrls.push(url);
+      const im = document.createElement('img'); im.src = url; im.alt = it.site; $('v-imgs').append(im);
+    } catch (_) { toast('לא ניתן לפתוח את התמונה'); }
   }
 }
+$('v-showimg').onclick = () => { $('v-showimg').hidden = true; showImgs(viewing); };
+$('v-move').onclick = async () => {
+  const it = viewing; if (!it) return;
+  const folder = await pickFolder('לאיזו תיקייה להעביר?', it.folder);
+  if (folder === undefined || !dk || folder === (it.folder || null)) return;
+  it.folder = folder; cur = folder; await saveItems();
+  $('v-folder').textContent = folder ? pathOf(folder) : 'ללא תיקייה';
+  toast('הועבר אל: ' + $('v-folder').textContent);
+};
 // ---- צילום דף ושמירה כתמונה מוצפנת ----
 // בזמן שהמצלמה או הגלריה פתוחות האפליקציה יוצאת לרקע: לא נועלים אז, ומחדשים את הטיימר בחזרה
 let picking = false;
 $('m-photo').onclick = () => { picking = true; clearTimeout(idleT); $('p-file').click(); };
 window.addEventListener('focus', () => { if (picking) setTimeout(() => { picking = false; touch(); }, 1500); });
-async function shrink(file) {
+async function shrink(file, max = 1800) {
   // טעינה דרך אלמנט תמונה: מטפל בכיוון (EXIF) ובפורמטים של האייפון בצורה הכי תואמת
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('decode')); i.src = url; });
     const w0 = img.naturalWidth, h0 = img.naturalHeight;
     if (!w0 || !h0) throw new Error('empty');
-    const sc = Math.min(1, 1800 / Math.max(w0, h0));
+    const sc = Math.min(1, max / Math.max(w0, h0));
     const c = document.createElement('canvas'); c.width = Math.round(w0 * sc); c.height = Math.round(h0 * sc);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
@@ -279,12 +324,7 @@ function openEdit(it) {
   $('e-addimg').hidden = !(it && it.kind === 'photo');
   $('e-site').placeholder = (it && it.kind === 'photo') ? 'שם התמונות' : 'אתר';
   window.scrollTo(0, 0);
-  const sel = $('e-folder'); sel.textContent = '';
-  const none = document.createElement('option'); none.value = ''; none.textContent = 'ללא תיקייה'; sel.append(none);
-  folders.map(f => ({ id: f.id, p: pathOf(f.id) })).sort((a, b) => a.p.localeCompare(b.p)).forEach(f => {
-    const o = document.createElement('option'); o.value = f.id; o.textContent = f.p; sel.append(o);
-  });
-  sel.value = it ? (it.folder || '') : (cur || '');
+  fillFolders($('e-folder'), it ? it.folder : cur);
   show('edit');
 }
 // ---- תיקיות ----
@@ -322,8 +362,10 @@ $('e-save').onclick = async () => {
 };
 $('e-del').onclick = async () => {
   if (!editing || !(await dialog('למחוק את הרשומה?'))) return;
-  for (const id of editing.imgs || []) await kv.del('img:' + id);
-  items = items.filter(i => i !== editing); await saveItems(); $('e-pw').value = ''; show('main'); renderList();
+  const gone = editing; items = items.filter(i => i !== gone);
+  // תמונה יכולה להיות משותפת לכמה רשומות או להמתין בתור: מוחקים רק אם אין לה שימוש אחר
+  for (const id of gone.imgs || []) if (!items.some(i => (i.imgs || []).includes(id)) && !queue.some(q => q.imgId === id)) await kv.del('img:' + id);
+  await saveItems(); $('e-pw').value = ''; show('main'); renderList();
 };
 
 // ---- הגדרות: גיבוי ו-Face ID ----
