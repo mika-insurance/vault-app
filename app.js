@@ -56,7 +56,7 @@ function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; c
 
 // ---- נעילה ----
 function lock() {
-  closePick(); if (window.ocrReset) ocrReset();
+  closePick(); if (window.ocrReset) ocrReset(); onlyReview = false; $('v-flag').hidden = $('v-ok').hidden = true;
   dk = null; items = []; folders = []; queue = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null; clearImgs(); pending = []; addTo = null;
   $('m-q').value = ''; $('e-pw').value = ''; $('l-pw').value = '';
   $('m-list').textContent = '';
@@ -152,6 +152,15 @@ $('l-face').onclick = tryFace;
 // ---- מסך ראשי ----
 function enter() { cur = null; show('main'); renderList(); backupWarn(); touch(); if (needSave) { needSave = false; saveItems(); } }
 $('m-q').oninput = renderList;
+let onlyReview = false;
+$('m-review').onclick = () => { onlyReview = !onlyReview; cur = null; $('m-q').value = ''; renderList(); };
+$('v-ok').onclick = async () => {
+  const it = viewing; if (!it) return;
+  delete it.review; await saveItems(); if (!dk) return;
+  const following = onlyReview && items.filter(i => i.review).sort((a, b) => a.site.localeCompare(b.site))[0];
+  if (following) openView(following); else goBack();
+  toast('אומת ונשמר');
+};
 function renderList() {
   const q = $('m-q').value.trim().toLowerCase();
   const ul = $('m-list'); ul.textContent = '';
@@ -161,13 +170,21 @@ function renderList() {
   $('m-newf').hidden = !!q;
   $('m-resume').hidden = !queue.length;
   $('m-resume').textContent = '▶ המשך קריאת תמונות (נשארו ' + queue.length + ')';
-  if (inF) {
+  const waiting = items.filter(i => i.review).length;
+  if (!waiting || q) onlyReview = false;
+  $('m-review').hidden = !waiting || !!q;
+  $('m-review').textContent = onlyReview ? '→ חזרה לכל התיקיות' : '🤖 לאימות (' + waiting + ')';
+  const photos = window.ocrPhotos && !q && !onlyReview ? ocrPhotos().reduce((s, p) => s + (p.imgs || []).length, 0) : 0;
+  $('m-auto').hidden = !photos;
+  $('m-auto').textContent = '⚡ קריאה אוטומטית של ' + photos + ' תמונות ' + (cur ? 'בתיקייה' : 'בכספת');
+  if (onlyReview) $('m-newf').hidden = $('m-renf').hidden = $('m-delf').hidden = true;
+  if (inF && !onlyReview) {
     const b = document.createElement('button'); b.className = 'crumbbtn';
     b.textContent = '→ ' + pathOf(cur) + ' (חזרה)';
     b.onclick = () => { const f = folders.find(x => x.id === cur); cur = f ? f.parent : null; renderList(); };
     crumb.append(b);
   }
-  if (!q) {
+  if (!q && !onlyReview) {
     folders.filter(f => f.parent === cur).sort((a, b) => a.name.localeCompare(b.name)).forEach(f => {
       const li = document.createElement('li'); li.className = 'folder';
       const n = items.filter(i => inside(f.id).includes(i.folder)).length;
@@ -178,14 +195,14 @@ function renderList() {
       ul.append(li);
     });
   }
-  const shown = items.filter(i => q ? (i.site.toLowerCase().includes(q) || i.user.toLowerCase().includes(q)) : i.folder === cur)
+  const shown = items.filter(i => onlyReview ? i.review : q ? (i.site.toLowerCase().includes(q) || i.user.toLowerCase().includes(q)) : i.folder === cur)
     .sort((a, b) => a.site.localeCompare(b.site));
   if (!shown.length && !ul.children.length) { const li = document.createElement('li'); li.className = 'empty'; li.textContent = items.length ? (q ? 'לא נמצא' : 'התיקייה ריקה. לחץ על ＋') : 'עדיין אין סיסמאות. לחץ על ＋'; ul.append(li); return; }
   for (const it of shown) {
     const li = document.createElement('li');
     const info = document.createElement('div'); info.className = 'info';
-    const s = document.createElement('b'); s.textContent = (it.kind === 'photo' ? '📷 ' : '') + it.site;
-    const u = document.createElement('span'); u.textContent = (it.kind === 'photo' ? (it.imgs || []).length + ' תמונות מוצפנות' : it.user) + (q && it.folder ? '  ·  ' + pathOf(it.folder) : '');
+    const s = document.createElement('b'); s.textContent = (it.review ? '🤖 ' : it.kind === 'photo' ? '📷 ' : '') + it.site;
+    const u = document.createElement('span'); u.textContent = (it.kind === 'photo' ? (it.imgs || []).length + ' תמונות מוצפנות' : it.user) + ((q || onlyReview) && it.folder ? '  ·  ' + pathOf(it.folder) : '');
     info.append(s, u); info.onclick = () => openView(it);
     const cp = document.createElement('button'); cp.textContent = 'העתק'; cp.onclick = () => copyPw(it);
     li.append(info, cp); ul.append(li);
@@ -223,7 +240,10 @@ async function openView(it) {
   show('view');
   // ברשומה מוקלדת התמונה המקורית מוצגת רק לפי בקשה, כדי שהסיסמה שבה לא תיחשף
   $('v-showimg').hidden = photo || !(it.imgs || []).length;
-  if (photo) await showImgs(it);
+  $('v-flag').hidden = $('v-ok').hidden = !it.review;
+  // ברשומה שמחכה לאימות התמונה מוצגת מיד, להשוואה
+  if (it.review) $('v-showimg').hidden = true;
+  if (photo || it.review) await showImgs(it);
 }
 async function showImgs(it) {
   clearImgs();
@@ -355,7 +375,7 @@ $('e-save').onclick = async () => {
   if (!site || (!isPhoto && !pw)) return toast(isPhoto ? 'חסר שם' : 'חסר אתר או סיסמה');
   const folder = $('e-folder').value || null;
   if (editing && isPhoto) Object.assign(editing, { site, folder });
-  else if (editing) Object.assign(editing, { site, user, pw, folder });
+  else if (editing) { Object.assign(editing, { site, user, pw, folder }); delete editing.review; }
   else items.push({ id: crypto.randomUUID(), site, user, pw, folder });
   cur = folder;
   await saveItems(); $('e-pw').value = ''; show('main'); $('m-q').value = ''; renderList(); touch();

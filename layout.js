@@ -92,6 +92,16 @@ const Layout = (() => {
     } else pending.forEach(standalone);
     return out;
   }
-  return { findRows, pairRows, buildRecords };
+  // ניחוש תיקייה לפי מילים בשם. הסדר קובע (למשל "ביטוח לאומי" לפני "לאומי" של הבנק)
+  const FOLDERS = [
+    ['ממשלה ורשויות', /ביטוח לאומי|מס הכנסה|מע["״]?מ|רשות המסים|עירי|ארנונה|ממשל|gov\.il/i],
+    ['רשתות חברתיות', /פייסבוק|אינסטגרם|טיקטוק|לינקדאין|יוטיוב|facebook|instagram|tik ?tok|linkedin|youtube|twitter/i],
+    ['כרטיסי אשראי', /אשראי|ויזה|ישראכרט|מאסטרקארד|אמריקן|כאל|visa|master ?card|isracard|amex/i],
+    ['בנקים', /בנק|לאומי|פועלים|דיסקונט|מזרחי|בינלאומי|bank|paypal/i],
+    ['ביטוח', /ביטוח|פנסי|גמל|מגדל|הראל|מנורה|הפניקס|איילון|הכשרה|שלמה|כלל/i],
+    ['חשבונות דואר אלקטרוני', /דואר|מייל|אאוטלוק|ג.?ימייל|gmail|outlook|office|365|hotmail|yahoo|icloud|\bmail\b/i]
+  ];
+  function guessFolder(text) { const f = FOLDERS.find(x => x[1].test(text || '')); return f ? f[0] : 'לא ממוינות'; }
+  return { findRows, pairRows, buildRecords, guessFolder };
 })();
 if (typeof module !== 'undefined') module.exports = Layout;

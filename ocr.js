@@ -164,14 +164,18 @@ if (typeof document !== 'undefined') (() => {
     $('o-lines').textContent = ''; $('o-status').textContent = '';
   }
   // נקרא בנעילה: מוחק מהמסך ומהזיכרון כל מה שנקרא
-  window.ocrReset = () => { clearScreen(); stopWorker(); };
+  window.ocrReset = () => { clearScreen(); stopWorker(); releaseWake(); };
+  let wake = null;
+  function releaseWake() { if (wake) wake.release().catch(() => {}); wake = null; }
 
   function busy(on) { ['o-ok', 'o-more', 'o-skip'].forEach(i => $(i).disabled = on); }
 
   // ---- בחירת תמונות והכנסה לתור ----
   async function enqueue(files) {
     if (!dk) return toast('הכספת ננעלה בזמן הבחירה. פתח אותה ונסה שוב');
-    const folder = await pickFolder('לאיזו תיקייה להכניס את ' + files.length + ' התמונות?', cur);
+    const auto = await dialog('איך לקרוא את ' + files.length + ' התמונות? אוטומטי: הכול נשמר ומסומן 🤖 לאימות, והתיקיות נבחרות לבד.', { ok: 'אוטומטי', no: 'אחת אחת' });
+    if (!dk) return;
+    const folder = auto ? cur : await pickFolder('לאיזו תיקייה להכניס את ' + files.length + ' התמונות?', cur);
     if (folder === undefined || !dk) return;
     let added = 0;
     try {
@@ -186,7 +190,9 @@ if (typeof document !== 'undefined') (() => {
         await saveItems(); added++;
       }
     } catch (e) { toast('הוספת תמונה נכשלה אחרי ' + added + ' תמונות'); }
-    if (added && dk) next();
+    if (!added || !dk) return;
+    if (auto) { queue.slice(-added).forEach(q => q.auto = true); await saveItems(); }
+    next();
   }
   $('m-ocr').onclick = () => { picking = true; clearTimeout(idleT); $('o-file').click(); };
   $('o-file').onchange = e => { const files = [...e.target.files]; e.target.value = ''; if (files.length) enqueue(files); };
@@ -201,13 +207,52 @@ if (typeof document !== 'undefined') (() => {
     await saveItems(); clearImgs(); viewing = null; next();
   };
 
+  // כל התמונות ששמורות בתיקייה הנוכחית (כולל תתי-תיקיות), בקריאה אוטומטית
+  window.ocrPhotos = () => {
+    const ids = cur ? inside(cur) : null;
+    return items.filter(i => i.kind === 'photo' && !i.noText && (!ids || ids.includes(i.folder)));
+  };
+  $('m-auto').onclick = async () => {
+    const photos = ocrPhotos(), n = photos.reduce((s, p) => s + (p.imgs || []).length, 0);
+    if (!n || !(await dialog('לקרוא אוטומטית ' + n + ' תמונות? כל מה שיזוהה יישמר ויסומן 🤖 לאימות. השאר את המסך פתוח.', { ok: 'התחלה' })) || !dk) return;
+    for (const it of photos) for (const imgId of it.imgs || []) {
+      const old = queue.find(q => q.imgId === imgId);
+      if (old) old.auto = true;
+      else queue.push({ id: crypto.randomUUID(), imgId, folder: it.folder, from: it.id, auto: true });
+    }
+    await saveItems(); next();
+  };
+  function folderId(name) {
+    let f = folders.find(x => x.name === name && !x.parent) || folders.find(x => x.name === name);
+    if (!f) { f = { id: crypto.randomUUID(), name, parent: null }; folders.push(f); }
+    return f.id;
+  }
+  // שמירת כל הרשומות מתמונה אחת בבת אחת, כך שעצירה באמצע לא יוצרת כפילויות
+  async function saveAuto(q, found) {
+    const list = found.slice(q.done || 0).filter(r => r.pw || r.user);
+    for (const r of list) {
+      const site = (r.site || '').trim() || 'לא זוהה שם';
+      items.push({ id: crypto.randomUUID(), site, user: r.user || '', pw: r.pw || '', folder: folderId(Layout.guessFolder(site)), imgs: [q.imgId], review: true });
+    }
+    if (list.length || q.saved) detach(q);
+    else if (q.from) { const src = items.find(i => i.id === q.from); if (src) src.noText = true; }
+    else { keepAsPhoto(q); items[items.length - 1].noText = true; }
+    queue.shift(); await saveItems();
+  }
+
   // ---- מסך אישור ----
   async function next() {
     clearScreen();
     if (!dk) return;
-    if (!queue.length) { stopWorker(); show('main'); renderList(); return; }
+    if (!queue.length) {
+      stopWorker(); releaseWake(); show('main'); renderList();
+      const n = items.filter(i => i.review).length; if (n) toast(n + ' רשומות מחכות לאימות 🤖');
+      return;
+    }
     const q = queue[0], my = token, alive = () => my === token && !!dk;
     current = q; show('ocr'); window.scrollTo(0, 0); busy(true); touch();
+    $('o-form').hidden = !!q.auto;
+    if (q.auto && navigator.wakeLock) navigator.wakeLock.request('screen').then(l => wake = l).catch(() => {});
     $('o-count').textContent = 'נשארו ' + queue.length + ' תמונות';
     fillFolders($('o-folder'), q.folder);
     let blob;
@@ -227,6 +272,7 @@ if (typeof document !== 'undefined') (() => {
     try {
       const out = await readImage(blob, alive, (n, of) => { $('o-status').textContent = 'קורא שדה ' + n + ' מתוך ' + of + '...'; });
       if (!out || !alive()) return;
+      if (q.auto) { await saveAuto(q, out.records); if (alive()) next(); return; }
       records = out.records.length ? out.records : [{ site: '', user: '', pw: '' }];
       showLines(out.lines);
       // אם נעצר באמצע תמונה, ממשיכים מהרשומה שאחרי האחרונה שטופלה
@@ -235,6 +281,8 @@ if (typeof document !== 'undefined') (() => {
     } catch (e) {
       if (!alive()) return;
       stopWorker(); records = [{ site: '', user: '', pw: '' }];
+      // באוטומטי נעצרים על תמונה שנכשלה: אפשר לדלג עליה או לעצור
+      q.auto = false; $('o-form').hidden = false;
       $('o-status').textContent = 'הקריאה נכשלה. אפשר להקליד ידנית או לשמור כתמונה.';
     } finally {
       clearInterval(keep); clearTimeout(limit);
@@ -309,7 +357,7 @@ if (typeof document !== 'undefined') (() => {
   $('o-ok').onclick = () => approve(false);
   $('o-more').onclick = () => approve(true);
   $('o-skip').onclick = async () => { if (!current || !dk) return; busy(true); await advance(); };
-  $('o-stop').onclick = () => { clearScreen(); stopWorker(); show('main'); renderList(); window.scrollTo(0, 0); };
+  $('o-stop').onclick = () => { clearScreen(); stopWorker(); releaseWake(); show('main'); renderList(); window.scrollTo(0, 0); };
   $('o-all').onclick = async () => {
     if (!(await dialog('לסיים בלי לקרוא את שאר התמונות? הן יישמרו כתמונות.')) || !dk) return;
     queue.forEach(q => { if (q.saved) detach(q); else keepAsPhoto(q); }); queue = []; await saveItems(); next();

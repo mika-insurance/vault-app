@@ -48,3 +48,4 @@ input.code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:19px}
 img.crop{display:block;max-width:100%;max-height:80px;margin:0 auto 6px;border-radius:8px}
 img.crop[hidden]{display:none}
 button:disabled{opacity:.5}
+.review{background:#422006;border-color:var(--warn);color:var(--warn)}

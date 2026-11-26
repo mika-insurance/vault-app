@@ -1,6 +1,6 @@
 'use strict';
 // מטמון קבצי האפליקציה בלבד (קוד, לא נתונים), כדי שתעבוד גם בלי רשת.
-const CACHE = 'vault-v14';
+const CACHE = 'vault-v15';
 // ספריית הקריאה גדולה ולא משתנה בין גרסאות: מטמון נפרד, נשמר בשימוש הראשון
 const OCR_CACHE = 'vault-ocr-7';
 const FILES = ['./', 'index.html', 'style.css', 'crypto.js', 'app.js', 'layout.js', 'ocr.js', 'manifest.json', 'icon-180.png', 'icon-512.png'];

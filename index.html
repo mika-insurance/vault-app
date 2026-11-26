@@ -51,7 +51,9 @@
   </div>
   <button id="m-ocr">🔎 קריאת צילומי מסך</button>
   <input id="o-file" type="file" accept="image/*" multiple hidden>
+  <button id="m-auto" hidden></button>
   <button id="m-resume" class="primary" hidden></button>
+  <button id="m-review" class="review" hidden></button>
   <p id="m-warn" class="warn" hidden></p>
   <ul id="m-list"></ul>
   <footer>
@@ -67,6 +69,8 @@
   </div>
   <h2 id="v-site"></h2>
   <p id="v-folder" class="mut"></p>
+  <p id="v-flag" class="warn" hidden>🤖 נקלט אוטומטית ועוד לא אומת</p>
+  <button id="v-ok" class="primary" hidden>✅ בדקתי, הפרטים נכונים</button>
   <div id="v-imgs"></div>
   <div id="v-textpart">
     <div class="field"><small>שם משתמש</small><div id="v-user" dir="ltr"></div></div>
@@ -105,6 +109,7 @@
   <p id="o-count" class="mut"></p>
   <div class="shot"><img id="o-img" alt="התמונה שנקראת"></div>
   <p id="o-status" class="warn"></p>
+  <div id="o-form">
   <input id="o-site" class="code" placeholder="אתר" dir="ltr" lang="en" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
   <input id="o-user" class="code" placeholder="שם משתמש / אימייל" dir="ltr" lang="en" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
   <input id="o-pw" class="code" placeholder="סיסמה" dir="ltr" lang="en" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
@@ -115,6 +120,7 @@
   <button id="o-skip">דילוג על הרשומה</button>
   <details><summary>כל השורות שנקראו</summary><div id="o-lines"></div></details>
   <button id="o-all">סיום: את השאר לשמור כתמונות</button>
+  </div>
 </section>
 
 <section id="v-set" hidden>
@@ -124,7 +130,7 @@
   <button id="t-exp">ייצוא גיבוי מוצפן</button>
   <label class="btn">ייבוא גיבוי <input id="t-imp" type="file" accept=".json,application/json" hidden></label>
   <p id="t-msg"></p>
-  <p class="mut">גרסה 14</p>
+  <p class="mut">גרסה 15</p>
   <button id="t-back">חזרה</button>
 </section>
 
