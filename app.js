@@ -56,7 +56,7 @@ function toast(t) { const e = $('toast'); e.textContent = t; e.hidden = false; c
 
 // ---- נעילה ----
 function lock() {
-  closePick(); if (window.ocrReset) ocrReset(); onlyReview = false; $('v-flag').hidden = $('v-ok').hidden = true;
+  closePick(); if (window.ocrReset) ocrReset(); onlyReview = false; $('v-flag').hidden = $('v-ok').hidden = true; $('v-extra').textContent = $('e-extra').textContent = '';
   dk = null; items = []; folders = []; queue = []; cur = null; editing = null; $('dlg').hidden = true; $('d-in').value = ''; $('v-pw').textContent = ''; $('v-user').textContent = ''; viewing = null; clearImgs(); pending = []; addTo = null;
   $('m-q').value = ''; $('e-pw').value = ''; $('l-pw').value = '';
   $('m-list').textContent = '';
@@ -240,6 +240,7 @@ async function openView(it) {
   show('view');
   // ברשומה מוקלדת התמונה המקורית מוצגת רק לפי בקשה, כדי שהסיסמה שבה לא תיחשף
   $('v-showimg').hidden = photo || !(it.imgs || []).length;
+  showExtra(it);
   $('v-flag').hidden = $('v-ok').hidden = !it.review;
   // ברשומה שמחכה לאימות התמונה מוצגת מיד, להשוואה
   if (it.review) $('v-showimg').hidden = true;
@@ -334,8 +335,32 @@ $('v-editbtn').onclick = goEdit; $('v-edit2').onclick = goEdit;
 const goBack = () => { $('v-pw').textContent = ''; viewing = null; clearImgs(); show('main'); renderList(); window.scrollTo(0, 0); };
 $('v-back').onclick = goBack; $('v-back2').onclick = goBack;
 
+// ---- שדות נוספים (שם חופשי וערך, למשל הערה או קוד) ----
+function extraRow(x = { name: '', value: '' }) {
+  const row = document.createElement('div'); row.className = 'xrow';
+  const n = document.createElement('input'); n.placeholder = 'שם השדה (למשל: הערה, קוד, מספר חשבון)'; n.value = x.name; n.autocomplete = 'off';
+  const v = document.createElement('textarea'); v.placeholder = 'תוכן'; v.rows = 2; v.value = x.value; v.dir = 'auto'; v.autocomplete = 'off'; v.setAttribute('autocorrect', 'off'); v.spellcheck = false;
+  const d = document.createElement('button'); d.textContent = 'הסרת השדה'; d.onclick = () => row.remove();
+  row.append(n, v, d); $('e-extra').append(row);
+  return n;
+}
+const readExtra = () => [...$('e-extra').children].map(r => ({ name: r.querySelector('input').value.trim(), value: r.querySelector('textarea').value.trim() })).filter(x => x.value);
+function showExtra(it) {
+  const box = $('v-extra'); box.textContent = '';
+  for (const x of it.extra || []) {
+    const f = document.createElement('div'); f.className = 'field';
+    const n = document.createElement('small'); n.textContent = x.name || 'הערה';
+    const v = document.createElement('div'); v.className = 'val'; v.dir = 'auto'; v.textContent = x.value;
+    const c = document.createElement('button'); c.textContent = 'העתק';
+    c.onclick = () => copyPw({ pw: x.value });
+    f.append(n, v, c); box.append(f);
+  }
+}
+$('e-addfield').onclick = () => extraRow().focus();
+
 // ---- עריכה ----
 function openEdit(it) {
+  $('e-extra').textContent = ''; ((it && it.extra) || []).forEach(x => extraRow(x));
   editing = it || null;
   $('e-title').textContent = it ? 'עריכה' : 'רשומה חדשה';
   $('e-site').value = it ? it.site : ''; $('e-user').value = it ? it.user : ''; $('e-pw').value = it ? it.pw : '';
@@ -371,14 +396,14 @@ $('e-gen').onclick = () => { $('e-pw').value = VC.gen(20); $('e-pw').type = 'tex
 $('e-cancel').onclick = () => { $('e-pw').value = ''; if (editing) openView(editing); else show('main'); };
 $('e-save').onclick = async () => {
   const site = $('e-site').value.trim(), user = $('e-user').value.trim(), pw = $('e-pw').value;
-  const isPhoto = !!(editing && editing.kind === 'photo');
-  if (!site || (!isPhoto && !pw)) return toast(isPhoto ? 'חסר שם' : 'חסר אתר או סיסמה');
+  const isPhoto = !!(editing && editing.kind === 'photo'), extra = readExtra();
+  if (!site || (!isPhoto && !pw && !extra.length)) return toast(isPhoto ? 'חסר שם' : 'חסר אתר או סיסמה');
   const folder = $('e-folder').value || null;
-  if (editing && isPhoto) Object.assign(editing, { site, folder });
-  else if (editing) { Object.assign(editing, { site, user, pw, folder }); delete editing.review; }
-  else items.push({ id: crypto.randomUUID(), site, user, pw, folder });
+  if (editing && isPhoto) Object.assign(editing, { site, folder, extra });
+  else if (editing) { Object.assign(editing, { site, user, pw, folder, extra }); delete editing.review; }
+  else items.push({ id: crypto.randomUUID(), site, user, pw, folder, extra });
   cur = folder;
-  await saveItems(); $('e-pw').value = ''; show('main'); $('m-q').value = ''; renderList(); touch();
+  await saveItems(); $('e-pw').value = ''; $('e-extra').textContent = ''; show('main'); $('m-q').value = ''; renderList(); touch();
 };
 $('e-del').onclick = async () => {
   if (!editing || !(await dialog('למחוק את הרשומה?'))) return;
