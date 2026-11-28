@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="סל קניות">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#1E7A4C">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+<title>סל קניות</title>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <h1>סל קניות</h1>
+    <div class="tabs" id="tabs" role="tablist" aria-label="הרשימות שלי"></div>
+    <div class="sub"><span id="count"></span><span id="left"></span></div>
+    <div class="bar"><i id="fill"></i></div>
+    <div class="total" id="total" hidden></div>
+    <form id="f" autocomplete="off">
+      <input type="text" id="in" placeholder="מה חסר? אפשר להכתיב: חלב ושתי חלות" aria-label="הוספת מוצר">
+      <button class="mic" id="mic" type="button" hidden aria-label="הכתבה"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/></svg></button>
+      <button class="add" type="submit">הוסף</button>
+    </form>
+    <div class="chips" id="chips" aria-label="הוספה מהירה"></div>
+  </header>
+  <main id="list"></main>
+  <div class="foot">
+    <button class="ghost" id="clearDone" type="button">נקה היסטוריה</button>
+    <button class="ghost danger" id="resetList" type="button">אפס רשימה</button>
+    <button class="ghost" id="rename" type="button">שנה שם</button>
+    <button class="ghost danger" id="delList" type="button">מחק רשימה</button>
+  </div>
+  <div class="foot">
+    <button class="ghost" id="export" type="button">שמור גיבוי</button>
+    <label class="ghost" for="import">שחזר מגיבוי</label>
+    <input id="import" type="file" accept=".json,application/json" hidden>
+  </div>
+  <p class="note" id="note">הרשימות שמורות במכשיר הזה. באייפון, להכתבה לוחצים על המיקרופון במקלדת.</p>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
